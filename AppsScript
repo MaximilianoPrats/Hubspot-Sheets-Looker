@@ -1,0 +1,293 @@
+function obtenerDatosHubSpot1() {
+  var apiKey = 'yourkey'; // Replace with your HubSpot API key
+  var sheetId = 'sheetID';
+  var sheetName = 'SheetName';
+  var headers = {
+    'Authorization': 'Bearer ' + apiKey,
+    'Content-Type': 'application/json'
+  };
+
+  // Clear existing content in the spreadsheet.
+  var sheet = SpreadsheetApp.openById(sheetId).getSheetByName(sheetName);
+  sheet.clear();
+
+  var url = 'https://api.hubapi.com/crm/v3/objects/deals/search';
+
+  var today = new Date();
+  var threeMonthsAgo = new Date();
+  threeMonthsAgo.setMonth(today.getMonth() - 3);
+
+  // Format dates in ISO 8601 format
+  var todayISOString = today.toISOString();
+  var threeMonthsAgoISOString = threeMonthsAgo.toISOString();
+
+  // Query parameters to filter deals. + Example Properties
+  var params = {
+    'filterGroups': [
+      {
+        'filters': [
+          {
+            'propertyName': 'createdate',
+            'operator': 'GTE',
+            'value': threeMonthsAgoISOString
+          },
+          {
+            'propertyName': 'createdate',
+            'operator': 'LTE',
+            'value': todayISOString
+          },
+        ]
+      }
+    ],
+    'properties': [
+      'hs_object_id',
+      'dealname',
+      'amount',
+      'closedate',
+      'createdate',
+      'hs_created_by_user_id',
+      'hubspot_owner_id',
+      'deal_source',
+      'dealstage',
+      'dealtype',
+      'notes_last_contacted',
+      'pipeline',
+      'time_between_creation_and_activation',
+      'expected_line_size',
+      'product',
+    ],
+    'limit': 99,
+    'sorts': [{'propertyName': 'createdate', 'direction': 'DESCENDING'}]  
+  };
+
+  try {
+    // Write headers to the sheet.
+    sheet.appendRow([
+      'Record ID',
+      'Deal Name',
+      'Amount',
+      'Close Date',
+      'Create Date',
+      'Created by user ID',
+      'Deal owner',
+      'Deal Source',
+      'Deal Stage',
+      'Deal Type',
+      'Last Contacted',
+      'Pipeline',
+      'Time between Creation and Qualification (HH:mm:ss)',
+      'Expected line size',
+      'Product',
+    ]);
+
+    // Variable to store all results.
+    var allDeals = [];
+    var hasMoreResults = true;
+    var after = null;
+
+    while (hasMoreResults) {
+      // Set the 'after' parameter if available.
+      if (after) {
+        params['after'] = after;
+      }
+
+      var options = {
+        'method': 'post',
+        'headers': headers,
+        'payload': JSON.stringify(params)
+      };
+
+      var response = UrlFetchApp.fetch(url, options);
+      var data = JSON.parse(response.getContentText());
+
+      // Add current deals to the general list.
+      allDeals = allDeals.concat(data.results);
+
+      // Check for more results.
+      hasMoreResults = data.paging && data.paging.next;
+      
+      if (hasMoreResults) {
+        // Extract the 'after' parameter for the next iteration.
+        after = data.paging.next.after;
+      }
+
+      // Add a delay of 100 milliseconds between requests for API limits.
+      Utilities.sleep(200);
+    }
+    // Process the data and write it to the sheet.
+    processDeals1(allDeals);
+  } catch (error) {
+    Logger.log('Error: ' + error);
+  }
+}
+
+function processDeals1(deals) {
+  var sheetId = 'sheetID';
+  var sheetName = 'sheetname';
+  var sheet = SpreadsheetApp.openById(sheetId).getSheetByName(sheetName);
+
+  for (var i = 0; i < deals.length; i++) {
+    var deal = deals[i];
+
+    var hsObjectId = deal.properties.hs_object_id || '';
+    var dealName = deal.properties.dealname || '';
+    var amount = deal.properties.amount || '';
+    var closeDate = formatDate(deal.properties.closedate) || '';
+    var createDate = formatDate(deal.properties.createdate) || '';
+    var createdByUserId = deal.properties.hs_created_by_user_id || '';
+    var dealOwner = getOwnerName(deal.properties.hubspot_owner_id);
+    var dealSource = deal.properties.deal_source || '';
+    var dealStage = getDealStageLabel(deal.properties.pipeline,deal.properties.dealstage) || '';
+    var dealType = deal.properties.dealtype || '';
+    var lastContacted = formatDate(deal.properties.notes_last_contacted) || '';
+    var pipeline = getPipelineName(deal.properties.pipeline) || '';
+    var timeBetweenCreationAndQualification = millisecondsToHMS(deal.properties.time_between_creation_and_activation) || '';
+    var expectedLineSize = deal.properties.expected_line_size || '';
+    var product = deal.properties.product || '';
+
+
+    // Write data to the sheet.
+    sheet.appendRow([
+      hsObjectId,
+      dealName,
+      amount,
+      closeDate,
+      createDate,
+      createdByUserId,
+      dealOwner,
+      dealSource,
+      dealStage,
+      dealType,
+      lastContacted,
+      pipeline,
+      timeBetweenCreationAndQualification,
+      expectedLineSize,
+      product,
+    ]);
+  }
+}
+
+// Function to get the Name of the Pipeline (instead of the ID)
+function getPipelineName(pipelineId) {
+  var apiKey = 'your key'; // Replace with your HubSpot API key
+  var headers = {
+    'Authorization': 'Bearer ' + apiKey,
+    'Content-Type': 'application/json'
+  };
+
+  var url = 'https://api.hubapi.com/crm/v3/pipelines/deals/' + pipelineId;
+
+  var options = {
+    'method': 'get',
+    'headers': headers
+  };
+
+  try {
+    var response = UrlFetchApp.fetch(url, options);
+    var data = JSON.parse(response.getContentText());
+    return data.label || pipelineId; // Use the pipeline label if available, otherwise use the ID
+  } catch (error) {
+    Logger.log('Error getting pipeline name: ' + error);
+    throw error;
+  }
+  
+}
+
+// Function to get the Name of the Deal Stage (instead of the ID)
+function getDealStageLabel(pipelineId, stageId) {
+  var apiKey = 'yourkey'; // Replace with your HubSpot API key
+  var headers = {
+    'Authorization': 'Bearer ' + apiKey,
+    'Content-Type': 'application/json'
+  };
+
+  var url = 'https://api.hubapi.com/crm/v3/pipelines/deals/' + pipelineId + '/stages/' + stageId;
+
+  var options = {
+    'method': 'get',
+    'headers': headers
+  };
+
+  try {
+    var response = UrlFetchApp.fetch(url, options);
+    var data = JSON.parse(response.getContentText());
+    return data.label || stageId; // Use the stage label if available, otherwise use the ID
+  } catch (error) {
+    Logger.log('Error getting deal stage label: ' + error);
+    throw error;
+  }
+}
+
+// Function to get the Name of the Deal Owner (instead of the ID)
+function getOwnerName(ownerId) {
+  var apiKey = 'yourkey'; // Replace with your HubSpot API key
+  var headers = {
+    'Authorization': 'Bearer ' + apiKey,
+    'Content-Type': 'application/json'
+  };
+
+  var url = 'https://api.hubapi.com/crm/v3/owners/' + ownerId;
+
+  var options = {
+    'method': 'get',
+    'headers': headers
+  };
+
+  try {
+    var response = UrlFetchApp.fetch(url, options);
+    var data = JSON.parse(response.getContentText());
+
+    if (data.firstName && data.lastName) {
+      // Both firstName and lastName exist
+      return data.firstName + ' ' + data.lastName;
+    } else if (data.firstName) {
+      // Only firstName exists
+      return data.firstName;
+    } else if (data.lastName) {
+      // Only lastName exists
+      return data.lastName;
+    } else {
+      // If neither firstName nor lastName exist, return the original owner ID
+      return "Deactivated User";
+    }
+  } catch (error) {
+    if (error.message.indexOf('404') !== -1) {
+      // Owner not found, return the original owner ID
+      return "Deactivated User";
+    } else {
+      // Handle other errors
+      Logger.log('Error getting owner name: ' + error);
+      throw error;
+    }
+  }
+}
+
+
+// Helper function to format date
+function formatDate(dateString) {
+  if (dateString === null) {
+    return '';  // Return an empty string for zero duration
+  }
+  var date = new Date(dateString);
+  return Utilities.formatDate(date, "GMT", "yyyy-MM-dd HH:mm");
+}
+
+// Helper function to format time
+function millisecondsToHMS(milliseconds) {
+  if (milliseconds < 10) {
+    return '';  // Return an empty string for zero duration
+  }
+  var seconds = Math.floor(milliseconds / 1000);
+  var hours = Math.floor(seconds / 3600);
+  var minutes = Math.floor((seconds % 3600) / 60);
+  seconds = seconds % 60;
+
+  // Format the result as "hh:mm:ss"
+  var formattedTime = pad(hours) + ':' + pad(minutes) + ':' + pad(seconds);
+  return formattedTime;
+}
+
+// Helper function 2 to format time
+function pad(num) {
+  return (num < 10 ? '0' : '') + num;
+}
